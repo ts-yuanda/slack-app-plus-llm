@@ -189,7 +189,7 @@ def handle_interactive_message(event):
         success = handle_modal_submission(payload)
         return {
             'statusCode': 200,
-            'body': json.dumps('Modal submission processed')
+            'body': ''
         }
 
     # Extract key information from the payload
