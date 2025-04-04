@@ -1,14 +1,13 @@
-import json
-import logging
 import os
 import boto3
+import json
+import logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 slack_app_ids = os.environ['slack_app_ids'].split(",")
 slack_app_tokens = os.environ['slack_app_tokens'].split(",")
-
 
 def get_event_key_attrs(slack_event):
     '''
@@ -28,7 +27,6 @@ def get_event_key_attrs(slack_event):
 
     logger.info(f'{ret}')
     return ret
-
 
 def push_to_sqs(json_slack_event, team_id, event_ts, channel="", user=""):
     '''
@@ -70,10 +68,28 @@ def push_to_sqs(json_slack_event, team_id, event_ts, channel="", user=""):
 def lambda_handler(event, context):
     # Get lambda event body which contains slack event
     logger.debug(json.dumps(event, indent=2))
+    
+    # Check if this is an action callback based on path
+    path = event.get('path', '')
+    is_action_callback = 'action-callback' in path
+    logger.info(f"Request path: {path}, is_action_callback: {is_action_callback}")
+    
     json_body = event.get('body', '{}')
     headers = event.get('headers', {})
-    body = json.loads(json_body)
-    logger.debug(json.dumps(body, indent=2))
+    
+    logger.info(f"Incoming raw event:\n{json_body}")
+
+    # Parse the JSON body
+    try:
+        body = json.loads(json_body)
+    except Exception as e:
+        logger.warning(f"Failed to parse JSON body: {e}")
+        # this should be Slack action message
+        push_to_sqs(json_body, "test_team_id", "test_event_ts", "test_channel", "test_user")
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Slack event received')
+        }
 
     # Verify if is from known slack app
     if 'token' not in body or body['token'] not in slack_app_tokens:

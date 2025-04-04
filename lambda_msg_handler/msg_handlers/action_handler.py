@@ -1,0 +1,233 @@
+import urllib.parse
+import base64
+import json
+import logging
+import os
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Slack client
+slack_oauth_token = os.environ["slack_oauth_token"]
+slack = WebClient(token=slack_oauth_token)
+
+def open_incognito_modal(trigger_id, message_text, channel_id, message_ts):
+    """
+    Open a modal dialog for the incognito action
+    """
+    logger.info(f"Opening incognito modal with trigger_id: {trigger_id}")
+    
+    # Create the modal view using Block Kit
+    modal_view = {
+        "type": "modal",
+        "callback_id": "incognito_modal_submission",
+        "title": {
+            "type": "plain_text",
+            "text": "Incognito Message",
+            "emoji": True
+        },
+        "submit": {
+            "type": "plain_text",
+            "text": "Send",
+            "emoji": True
+        },
+        "close": {
+            "type": "plain_text",
+            "text": "Cancel",
+            "emoji": True
+        },
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Original Message:*\n{message_text}"
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "additional_message",
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "additional_message_input",
+                    "multiline": True,
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "Add your additional message here..."
+                    }
+                },
+                "label": {
+                    "type": "plain_text",
+                    "text": "Additional Message",
+                    "emoji": True
+                }
+            },
+            {
+                "type": "input",
+                "block_id": "channel_message_ts",
+                "element": {
+                    "type": "plain_text",
+                    "text": f"{channel_id}:{message_ts}"
+                },
+                "label": {
+                    "type": "plain_text",
+                    "text": "Message Reference",
+                    "emoji": True
+                }
+            }
+        ],
+        "private_metadata": json.dumps({
+            "channel_id": channel_id,
+            "message_ts": message_ts
+        })
+    }
+    
+    # Call Slack API to open the modal using the SDK
+    try:
+        response = slack.views_open(
+            trigger_id=trigger_id,
+            view=modal_view
+        )
+        
+        logger.info(f"Modal open response: {response}")
+        return True
+    except SlackApiError as e:
+        logger.error(f"Failed to open modal: {e.response['error']}")
+        return False
+    except Exception as e:
+        logger.error(f"Error opening modal: {e}")
+        return False
+
+def handle_modal_submission(payload):
+    """
+    Handle the submission of the incognito modal
+    """
+    logger.info("Handling modal submission")
+    
+    # Extract the submitted values
+    view = payload.get("view", {})
+    private_metadata = json.loads(view.get("private_metadata", "{}"))
+    channel_id = private_metadata.get("channel_id")
+    message_ts = private_metadata.get("message_ts")
+    
+    # Get the additional message from the input
+    state = view.get("state", {}).get("values", {})
+    additional_message = state.get("additional_message", {}).get("additional_message_input", {}).get("value", "")
+    
+    logger.info(f"Modal submission - channel: {channel_id}, message_ts: {message_ts}, additional_message: {additional_message}")
+    
+    # Send a reply to the original message thread using the SDK
+    try:
+        response = slack.chat_postMessage(
+            channel=channel_id,
+            thread_ts=message_ts,
+            text=f"Additional message: {additional_message}"
+        )
+        
+        logger.info(f"Message post response: {response}")
+        return True
+    except SlackApiError as e:
+        logger.error(f"Failed to post message: {e.response['error']}")
+        return False
+    except Exception as e:
+        logger.error(f"Error posting message: {e}")
+        return False
+
+
+def handle_interactive_message(event):
+    logger.info('Processing interactive message')
+    body_raw = event.get("body", "")
+    
+    # The body is base64 encoded, so we need to decode it first
+    try:
+        decoded_body = base64.b64decode(body_raw).decode('utf-8')
+        logger.debug(f"Base64 decoded body: {decoded_body}")
+        
+        # Now parse the URL-encoded data
+        parsed = urllib.parse.parse_qs(decoded_body)
+        logger.info(f"Parsed body:\n{parsed}")
+    except Exception as e:
+        logger.error(f"Failed to decode body: {e}")
+        return {"statusCode": 400, "body": "Invalid body format"}
+
+    if "payload" not in parsed:
+        logger.warning("Missing 'payload' in parsed body")
+        return {"statusCode": 400, "body": "Missing payload"}
+
+    try:
+        payload = json.loads(parsed["payload"][0])
+        logger.debug("Parsed payload:\n%s", json.dumps(payload, indent=2))
+    except Exception as e:
+        logger.error(f"Failed to parse payload JSON: {e}")
+        return {"statusCode": 400, "body": "Invalid payload"}
+
+    # Check if this is a modal submission
+    if payload.get("type") == "view_submission":
+        logger.info("Received modal submission")
+        success = handle_modal_submission(payload)
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Modal submission processed')
+        }
+
+    # Extract key information from the payload
+    interactive_type = payload.get('type', 'unknown')
+    callback_id = payload.get('callback_id', 'NoCallbackId')
+    team_id = payload.get('team', {}).get('id', 'NotFoundInEvent')
+    user_id = payload.get('user', {}).get('id', 'NotFoundInEvent')
+    channel_id = payload.get('channel', {}).get('id', 'NotFoundInEvent')
+    message_ts = payload.get('message_ts', 'NotFoundInEvent')
+    trigger_id = payload.get('trigger_id', '')
+    response_url = payload.get('response_url', '')
+    
+    logger.info(f"Interactive message details: type={interactive_type}, callback_id={callback_id}, "
+                f"team_id={team_id}, user_id={user_id}, channel_id={channel_id}, message_ts={message_ts}")
+    
+    # Check if this is our specific shortcut
+    if callback_id == 'slack_action_incognito':
+        logger.info('Processing incognito shortcut action')
+        
+        # Extract message text if available
+        message_text = ""
+        if 'message' in payload and 'text' in payload['message']:
+            message_text = payload['message']['text']
+            logger.info(f"Message text: {message_text}")
+        
+        # Open a modal for the user to input additional information
+        if trigger_id:
+            success = open_incognito_modal(trigger_id, message_text, channel_id, message_ts)
+            if success:
+                return {
+                    'statusCode': 200,
+                    'body': json.dumps('Modal opened successfully')
+                }
+            else:
+                # If modal opening fails, send a response to the response_url
+                try:
+                    # Use the SDK to send a response
+                    slack.chat_postEphemeral(
+                        channel=channel_id,
+                        user=user_id,
+                        text="Sorry, I couldn't open the modal. Please try again."
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending response: {e}")
+                
+                return {
+                    'statusCode': 500,
+                    'body': json.dumps('Failed to open modal')
+                }
+        else:
+            logger.error("No trigger_id found in payload")
+            return {
+                'statusCode': 400,
+                'body': json.dumps('No trigger_id found')
+            }
+    else:
+        logger.info(f'Unhandled callback_id: {callback_id}')
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Interactive message received but not handled')
+        }
