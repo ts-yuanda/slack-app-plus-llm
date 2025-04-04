@@ -5,6 +5,7 @@ import logging
 import os
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
+from msg_handlers.slack_related.utils import reply
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -18,6 +19,9 @@ def open_incognito_modal(trigger_id, message_text, channel_id, message_ts):
     Open a modal dialog for the incognito action
     """
     logger.info(f"Opening incognito modal with trigger_id: {trigger_id}")
+    logger.info(f"Message text: {message_text}")
+    logger.info(f"Channel ID: {channel_id}")
+    logger.info(f"Message TS: {message_ts}")
     
     # Create the modal view using Block Kit
     modal_view = {
@@ -56,24 +60,18 @@ def open_incognito_modal(trigger_id, message_text, channel_id, message_ts):
                     "placeholder": {
                         "type": "plain_text",
                         "text": "Add your additional message here..."
-                    }
+                    },
+                    "min_length": 1,
+                    "max_length": 3000
                 },
                 "label": {
                     "type": "plain_text",
                     "text": "Additional Message",
                     "emoji": True
-                }
-            },
-            {
-                "type": "input",
-                "block_id": "channel_message_ts",
-                "element": {
-                    "type": "plain_text",
-                    "text": f"{channel_id}:{message_ts}"
                 },
-                "label": {
+                "hint": {
                     "type": "plain_text",
-                    "text": "Message Reference",
+                    "text": "Your message will be posted as a thread reply to the original message.",
                     "emoji": True
                 }
             }
@@ -84,8 +82,25 @@ def open_incognito_modal(trigger_id, message_text, channel_id, message_ts):
         })
     }
     
+    # Log the full modal view for debugging
+    logger.info(f"Modal view structure: {json.dumps(modal_view, indent=2)}")
+    
     # Call Slack API to open the modal using the SDK
     try:
+        # Validate the trigger_id format
+        if not trigger_id or len(trigger_id) < 10:
+            logger.error(f"Invalid trigger_id format: {trigger_id}")
+            return False
+            
+        # Check if the token is valid
+        try:
+            auth_test = slack.auth_test()
+            logger.info(f"Auth test successful: {auth_test}")
+        except SlackApiError as e:
+            logger.error(f"Auth test failed: {e.response['error']}")
+            return False
+            
+        # Open the modal
         response = slack.views_open(
             trigger_id=trigger_id,
             view=modal_view
@@ -94,7 +109,17 @@ def open_incognito_modal(trigger_id, message_text, channel_id, message_ts):
         logger.info(f"Modal open response: {response}")
         return True
     except SlackApiError as e:
-        logger.error(f"Failed to open modal: {e.response['error']}")
+        error_code = e.response.get('error', 'unknown_error')
+        error_message = e.response.get('error', 'Unknown error')
+        logger.error(f"Failed to open modal: {error_code} - {error_message}")
+        logger.error(f"Full error response: {e.response}")
+        
+        # Check for specific error types
+        if error_code == 'invalid_trigger_id':
+            logger.error("The trigger_id is invalid or has expired")
+        elif error_code == 'invalid_arguments':
+            logger.error("There's an issue with the modal structure")
+            
         return False
     except Exception as e:
         logger.error(f"Error opening modal: {e}")
@@ -120,13 +145,8 @@ def handle_modal_submission(payload):
     
     # Send a reply to the original message thread using the SDK
     try:
-        response = slack.chat_postMessage(
-            channel=channel_id,
-            thread_ts=message_ts,
-            text=f"Additional message: {additional_message}"
-        )
-        
-        logger.info(f"Message post response: {response}")
+        reply(f"[树洞] {additional_message}", channel_id,
+              message_ts, slack)
         return True
     except SlackApiError as e:
         logger.error(f"Failed to post message: {e.response['error']}")
@@ -199,9 +219,10 @@ def handle_interactive_message(event):
         if trigger_id:
             success = open_incognito_modal(trigger_id, message_text, channel_id, message_ts)
             if success:
+                # Return a simple acknowledgment response
                 return {
                     'statusCode': 200,
-                    'body': json.dumps('Modal opened successfully')
+                    'body': ''
                 }
             else:
                 # If modal opening fails, send a response to the response_url
@@ -229,5 +250,5 @@ def handle_interactive_message(event):
         logger.info(f'Unhandled callback_id: {callback_id}')
         return {
             'statusCode': 200,
-            'body': json.dumps('Interactive message received but not handled')
+            'body': ''  # Empty body for acknowledgment
         }

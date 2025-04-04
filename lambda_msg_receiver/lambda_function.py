@@ -88,7 +88,7 @@ def lambda_handler(event, context):
         push_to_sqs(json_body, "test_team_id", "test_event_ts", "test_channel", "test_user")
         return {
             'statusCode': 200,
-            'body': json.dumps('Slack event received')
+            'body': ''
         }
 
     # Verify if is from known slack app
