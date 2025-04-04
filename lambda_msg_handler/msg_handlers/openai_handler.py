@@ -163,6 +163,29 @@ def handler_via_assistant(slack_event):
     # Get exsiting / Create new thread
     asst_thread_id = get_asst_thread_id(
         msg_details['channel_id'], msg_details['thread_ts'], msg_details['user'])
+    
+    # try to read special tags inside the message
+    if '#geo' in msg_details['text']:
+        logger.info(f'Geo tag found')
+        try:
+            # expect format: #geo <latitude>,<longitude>
+            geo_tag = msg_details['text'].split('#geo')[1].strip()
+            lat, lon = map(float, geo_tag.split(','))
+            logger.info(f'Geo coordinates: lat={lat}, lon={lon}')
+            
+            reply(f'Processing coordinates: {lat}, {lon}', msg_details['channel_id'],
+                  msg_details['event_ts'], slack)
+            return
+        except (ValueError, IndexError) as e:
+            logger.error(f'Failed to parse geo coordinates: {e}')
+            reply('Invalid format. Please use: #geo latitude,longitude', 
+                  msg_details['channel_id'], msg_details['event_ts'], slack)
+            return
+    else:
+        # do nothing for now
+        # return the minimum response
+        reply('hello world', msg_details['channel_id'], msg_details['event_ts'], slack)
+        return
 
     # Call OpenAI Assistant
     response = agent.ask_assistant(
