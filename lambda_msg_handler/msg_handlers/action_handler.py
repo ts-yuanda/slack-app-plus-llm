@@ -145,7 +145,7 @@ def handle_modal_submission(payload):
     
     # Send a reply to the original message thread using the SDK
     try:
-        reply(f"[树洞] {additional_message}", channel_id,
+        reply(f"{additional_message}", channel_id,
               message_ts, slack)
         return True
     except SlackApiError as e:

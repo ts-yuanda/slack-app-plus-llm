@@ -184,7 +184,7 @@ def handler_via_assistant(slack_event):
     else:
         # do nothing for now
         # return the minimum response
-        reply('hello world', msg_details['channel_id'], msg_details['event_ts'], slack)
+        # reply('hello world', msg_details['channel_id'], msg_details['event_ts'], slack)
         return
 
     # Call OpenAI Assistant
